@@ -67,7 +67,7 @@ async function appendSettingsPanel() {
 /** Loader handle for the active generation, or null when idle */
 let generationLoader = null;
 
-/** TODO(test): simulated generation duration in ms. Remove after testing. */
+/** TODO(test): delay before unlocking the input after generation ends, in ms. Remove after testing. */
 const TEST_DELAY_MS = 10_000;
 
 /** Timer handle for the active test delay, or null when idle */
@@ -92,7 +92,7 @@ function handleGenerationAfterCommands() {
         return;
     }
 
-    // Clear any stale test timer from a previous generation
+    // Cancel any pending unlock delay from a previous generation
     clearTestDelay();
 
     const { loader, stopGeneration } = getContext();
@@ -109,11 +109,6 @@ function handleGenerationAfterCommands() {
         },
     });
 
-    // TODO(test): auto-hide after the simulated duration. Remove after testing.
-    testDelayTimer = setTimeout(() => {
-        testDelayTimer = null;
-        handleGenerationEnded();
-    }, TEST_DELAY_MS);
 }
 
 /**
