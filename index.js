@@ -147,7 +147,7 @@ function handleSendButtonClick(event) {
 // ---- Event handlers ----
 
 /** TODO(test): simulated pre/post-processing task duration, in ms. Remove after testing. */
-const TEST_DELAY_MS = 10_000;
+const TEST_DELAY_MS = 20_000;
 
 /** Timer handle for the active test task, or null when idle */
 let testDelayTimer = null;
