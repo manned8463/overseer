@@ -67,16 +67,71 @@ async function appendSettingsPanel() {
 /** Loader handle for the active generation, or null when idle */
 let generationLoader = null;
 
-/** TODO(test): simulated post-generation task duration, in ms. Remove after testing. */
+/** TODO(test): simulated pre/post-processing task duration, in ms. Remove after testing. */
 const TEST_DELAY_MS = 10_000;
 
-/** Timer handle for the active test delay, or null when idle */
+/** Timer handle for the active test task, or null when idle */
 let testDelayTimer = null;
 
-/** Cancels the pending test delay timer, if any. */
+/** Cancel function for the active test task, or null when idle */
+let cancelTestTask = null;
+
+/** Cancels the active test task, if any. */
 function clearTestDelay() {
     clearTimeout(testDelayTimer);
     testDelayTimer = null;
+    cancelTestTask?.();
+    cancelTestTask = null;
+}
+
+/**
+ * TODO(test): stand-in for the future pre/post-processing features. Shows a
+ * cancellable loader and resolves when the simulated task completes or the
+ * user cancels it via the loader's stop button. Remove after testing.
+ *
+ * @param {string} message Message shown in the loader toast
+ * @param {string} stopTooltip Tooltip for the cancel button
+ * @returns {Promise<void>}
+ */
+function runTestTask(message, stopTooltip) {
+    clearTestDelay();
+
+    const { loader } = getContext();
+
+    return new Promise((resolve) => {
+        /** Ends the task and unblocks the awaiting caller. */
+        const finish = () => {
+            testDelayTimer = null;
+            cancelTestTask = null;
+            resolve();
+        };
+
+        // Show the task loader before hiding the previous one, so the input
+        // lock is seamless (the overlay never drops between the two)
+        const taskLoader = loader.show({
+            slug: MODULE_NAME,
+            message,
+            stopTooltip,
+            // stop() disposes the loader; just end the task here
+            onStop: finish,
+        });
+
+        // Cancel hook so external cancellation (cleanup, a new generation) ends the task
+        cancelTestTask = () => {
+            hideGenerationLoader();
+            finish();
+        };
+
+        // Hide the previous loader (clears its toast; the shared overlay stays up)
+        generationLoader?.hide();
+        generationLoader = taskLoader;
+
+        // TODO(test): simulated task duration. Remove after testing.
+        testDelayTimer = setTimeout(() => {
+            hideGenerationLoader();
+            finish();
+        }, TEST_DELAY_MS);
+    });
 }
 
 function handleIncomingMessage() {
@@ -84,23 +139,22 @@ function handleIncomingMessage() {
 }
 
 /**
- * Locks the user input with a blocking loader and a cancellable toast
- * when a generation is about to start.
+ * Runs the (test) pre-processing task under a cancellable loader, then locks
+ * the user input with a blocking loader while the generation is in flight.
  */
 async function handleGenerationAfterCommands() {
     if (!getSettings().enabled) {
         return;
     }
 
-    // Cancel any pending post-generation hold from a previous generation
-    // and hide its loader if still active
-    clearTestDelay();
-    await hideGenerationLoader();
-
     const { loader, stopGeneration } = getContext();
 
+    // TODO(test): run the pre-processing features here. Remove after testing.
+    // Cancelling ends the task early; generation then proceeds.
+    await runTestTask('Pre-processing...', 'Cancel pre-processing');
+
     // The stop button stops the in-flight generation, which fires GENERATION_ENDED,
-    // where the post-generation loader takes over.
+    // where the post-processing task takes over.
     generationLoader = loader.show({
         slug: MODULE_NAME,
         message: 'Generating...',
@@ -123,25 +177,10 @@ async function handleGenerationEnded() {
         return;
     }
 
-    const { loader } = getContext();
-
-    // Show the post-generation loader before hiding the generation-phase one,
-    // so the input lock is seamless (the overlay never drops between the two)
-    const postLoader = loader.show({
-        slug: MODULE_NAME,
-        message: 'Post-processing...',
-        stopTooltip: 'Cancel',
-        // The stop button cancels the task; stop() disposes the loader immediately
-        onStop: clearTestDelay,
-    });
-    await hideGenerationLoader();
-    generationLoader = postLoader;
-
-    // TODO(test): hide once the simulated task completes. Remove after testing.
-    testDelayTimer = setTimeout(() => {
-        testDelayTimer = null;
-        hideGenerationLoader();
-    }, TEST_DELAY_MS);
+    // TODO(test): run the post-processing features here. Remove after testing.
+    // The task loader is shown before the generation one is hidden, so the
+    // input lock is seamless (the overlay never drops between the two).
+    await runTestTask('Post-processing...', 'Cancel post-processing');
 }
 
 /** Hides the active generation loader, if any. */
@@ -165,10 +204,9 @@ async function cleanupEventListeners() {
     eventSource.removeListener(event_types.GENERATION_AFTER_COMMANDS, handleGenerationAfterCommands);
     eventSource.removeListener(event_types.GENERATION_ENDED, handleGenerationEnded);
 
-    // Hide the loader in case the extension is removed while a generation is in-flight
+    // Hide the loader in case the extension is removed while a task is in-flight
     clearTestDelay();
-    await generationLoader?.hide();
-    generationLoader = null;
+    await hideGenerationLoader();
 }
 
 // ---- Lifecycle hooks ----
