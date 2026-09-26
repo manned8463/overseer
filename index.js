@@ -67,6 +67,18 @@ async function appendSettingsPanel() {
 /** Loader handle for the active generation, or null when idle */
 let generationLoader = null;
 
+/** TODO(test): simulated generation duration in ms. Remove after testing. */
+const TEST_DELAY_MS = 10_000;
+
+/** Timer handle for the active test delay, or null when idle */
+let testDelayTimer = null;
+
+/** Cancels the pending test delay timer, if any. */
+function clearTestDelay() {
+    clearTimeout(testDelayTimer);
+    testDelayTimer = null;
+}
+
 function handleIncomingMessage() {
     // Handle message
 }
@@ -76,21 +88,37 @@ function handleIncomingMessage() {
  * when a generation is about to start.
  */
 function handleGenerationAfterCommands() {
-    const { loader } = getContext();
+    if (!getSettings().enabled) {
+        return;
+    }
 
-    // The default stop handler calls stopGeneration(), which fires GENERATION_ENDED,
-    // so the loader is hidden by handleGenerationEnded() in all cases.
+    const { loader, stopGeneration } = getContext();
+
+    // The stop button cancels the test delay and stops any in-flight generation,
+    // which disposes the loader / fires GENERATION_ENDED respectively.
     generationLoader = loader.show({
         slug: MODULE_NAME,
         message: 'Generating...',
         stopTooltip: 'Cancel generation',
+        onStop: () => {
+            clearTestDelay();
+            stopGeneration();
+        },
     });
+
+    // TODO(test): auto-hide after the simulated duration. Remove after testing.
+    testDelayTimer = setTimeout(() => {
+        testDelayTimer = null;
+        handleGenerationEnded();
+    }, TEST_DELAY_MS);
 }
 
 /**
  * Unlocks the user input when the generation completes, errors out, or is stopped.
  */
 async function handleGenerationEnded() {
+    clearTestDelay();
+
     if (generationLoader) {
         await generationLoader.hide();
         generationLoader = null;
@@ -111,6 +139,7 @@ async function cleanupEventListeners() {
     eventSource.removeListener(event_types.GENERATION_ENDED, handleGenerationEnded);
 
     // Hide the loader in case the extension is removed while a generation is in-flight
+    clearTestDelay();
     await generationLoader?.hide();
     generationLoader = null;
 }
