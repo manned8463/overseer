@@ -62,10 +62,89 @@ async function appendSettingsPanel() {
     });
 }
 
-// ---- Event handlers ----
+// ---- Input lock ----
 
-/** Loader handle for the active generation, or null when idle */
-let generationLoader = null;
+/** Cancel handler while the send button is taken over, or null when idle */
+let cancelActivePhase = null;
+
+/**
+ * Locks or unlocks the message input textarea.
+ * @param {boolean} locked Whether to lock the textarea
+ */
+function setTextareaLocked(locked) {
+    const textarea = document.querySelector('#send_textarea');
+    if (textarea instanceof HTMLTextAreaElement) {
+        textarea.disabled = locked;
+    }
+}
+
+/**
+ * Turns the send button into a cancel button, or restores its normal state.
+ * The original state is remembered in data attributes and restored on release.
+ * @param {boolean} active Whether to take over the button
+ * @param {string} [tooltip] Tooltip and aria-label shown while taken over
+ * @param {() => void} [onCancel] Invoked when the button is clicked while taken over
+ */
+function setSendButtonCancel(active, tooltip = '', onCancel = null) {
+    const sendButton = document.querySelector('#send_but');
+    if (!(sendButton instanceof HTMLElement)) {
+        return;
+    }
+
+    cancelActivePhase = null;
+
+    if (active) {
+        // Remember the original state so it can be restored (only once)
+        if (sendButton.dataset.overseerManaged !== 'true') {
+            sendButton.dataset.overseerManaged = 'true';
+            sendButton.dataset.overseerOriginalClassName = sendButton.className;
+            sendButton.dataset.overseerOriginalTitle = sendButton.getAttribute('title') ?? '';
+            const ariaLabel = sendButton.getAttribute('aria-label');
+            if (ariaLabel !== null) {
+                sendButton.dataset.overseerOriginalAriaLabel = ariaLabel;
+            }
+        }
+
+        sendButton.classList.remove('fa-paper-plane');
+        sendButton.classList.add('fa-circle-stop');
+        sendButton.title = tooltip;
+        sendButton.setAttribute('aria-label', tooltip);
+        cancelActivePhase = onCancel;
+    } else if (sendButton.dataset.overseerManaged === 'true') {
+        sendButton.className = sendButton.dataset.overseerOriginalClassName ?? sendButton.className;
+        sendButton.title = sendButton.dataset.overseerOriginalTitle ?? '';
+        const originalAriaLabel = sendButton.dataset.overseerOriginalAriaLabel;
+        if (originalAriaLabel !== undefined) {
+            sendButton.setAttribute('aria-label', originalAriaLabel);
+        } else {
+            sendButton.removeAttribute('aria-label');
+        }
+        delete sendButton.dataset.overseerManaged;
+        delete sendButton.dataset.overseerOriginalClassName;
+        delete sendButton.dataset.overseerOriginalTitle;
+        delete sendButton.dataset.overseerOriginalAriaLabel;
+    }
+}
+
+/**
+ * Capture-phase click handler that intercepts the send button while it is
+ * taken over, so clicks cancel the active phase instead of sending.
+ * @param {MouseEvent} event Click event
+ */
+function handleSendButtonClick(event) {
+    if (!cancelActivePhase) {
+        return;
+    }
+
+    const target = event.target;
+    if (target instanceof Element && target.closest('#send_but')) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cancelActivePhase();
+    }
+}
+
+// ---- Event handlers ----
 
 /** TODO(test): simulated pre/post-processing task duration, in ms. Remove after testing. */
 const TEST_DELAY_MS = 10_000;
@@ -76,6 +155,9 @@ let testDelayTimer = null;
 /** Cancel function for the active test task, or null when idle */
 let cancelTestTask = null;
 
+/** Whether the current generation is tracked by this extension */
+let overseerGeneration = false;
+
 /** Cancels the active test task, if any. */
 function clearTestDelay() {
     clearTimeout(testDelayTimer);
@@ -85,52 +167,33 @@ function clearTestDelay() {
 }
 
 /**
- * TODO(test): stand-in for the future pre/post-processing features. Shows a
- * cancellable loader and resolves when the simulated task completes or the
- * user cancels it via the loader's stop button. Remove after testing.
+ * TODO(test): stand-in for the future pre/post-processing features. Takes over
+ * the send button as a cancel button and resolves when the simulated task
+ * completes or the user cancels it by clicking that button. Remove after testing.
  *
- * @param {string} message Message shown in the loader toast
  * @param {string} stopTooltip Tooltip for the cancel button
  * @returns {Promise<void>}
  */
-function runTestTask(message, stopTooltip) {
+function runTestTask(stopTooltip) {
     clearTestDelay();
-
-    const { loader } = getContext();
 
     return new Promise((resolve) => {
         /** Ends the task and unblocks the awaiting caller. */
         const finish = () => {
             testDelayTimer = null;
             cancelTestTask = null;
+            setSendButtonCancel(false);
             resolve();
         };
 
-        // Show the task loader before hiding the previous one, so the input
-        // lock is seamless (the overlay never drops between the two)
-        const taskLoader = loader.show({
-            slug: MODULE_NAME,
-            message,
-            stopTooltip,
-            // stop() disposes the loader; just end the task here
-            onStop: finish,
-        });
-
         // Cancel hook so external cancellation (cleanup, a new generation) ends the task
-        cancelTestTask = () => {
-            hideGenerationLoader();
-            finish();
-        };
+        cancelTestTask = finish;
 
-        // Hide the previous loader (clears its toast; the shared overlay stays up)
-        generationLoader?.hide();
-        generationLoader = taskLoader;
+        // The taken-over send button cancels the task when clicked
+        setSendButtonCancel(true, stopTooltip, finish);
 
         // TODO(test): simulated task duration. Remove after testing.
-        testDelayTimer = setTimeout(() => {
-            hideGenerationLoader();
-            finish();
-        }, TEST_DELAY_MS);
+        testDelayTimer = setTimeout(finish, TEST_DELAY_MS);
     });
 }
 
@@ -142,65 +205,60 @@ function handleIncomingMessage() {
  * Runs the (test) pre-processing task under a cancellable loader, then locks
  * the user input with a blocking loader while the generation is in flight.
  */
-async function handleGenerationAfterCommands(_type, _options, dryRun) {
+async function handleGenerationAfterCommands(type, _options, dryRun) {
     if (!getSettings().enabled) {
         return;
     }
 
-    // Skip background dry runs (quiet prompts, auto-continue, etc.)
-    if (dryRun) {
+    // Skip background dry runs and quiet prompts from other extensions
+    if (dryRun || type === 'quiet') {
         return;
     }
 
-    const { loader, stopGeneration } = getContext();
+    // Mark this as an overseer-tracked generation, so GENERATION_ENDED (which
+    // carries no type/dry-run info) only reacts to generations we locked for
+    overseerGeneration = true;
+
+    // Keep the input locked across the pre task and the generation itself,
+    // so the message can't be re-submitted in between
+    setTextareaLocked(true);
 
     // TODO(test): run the pre-processing features here. Remove after testing.
     // Cancelling ends the task early; generation then proceeds.
-    await runTestTask('Pre-processing...', 'Cancel pre-processing');
+    await runTestTask('Cancel pre-processing');
 
-    // The stop button stops the in-flight generation, which fires GENERATION_ENDED,
+    // During the generation itself, SillyTavern shows its native stop button
+    // (#mes_stop), which stops the generation and fires GENERATION_ENDED,
     // where the post-processing task takes over.
-    generationLoader = loader.show({
-        slug: MODULE_NAME,
-        message: 'Generating...',
-        stopTooltip: 'Cancel generation',
-        onStop: () => stopGeneration(),
-    });
 }
 
 /**
- * Keeps the user input locked with a cancellable loader while a (test)
- * post-generation task runs after the generation completes, errors out,
- * or is stopped. Unlocks when the task finishes or is cancelled.
+ * Keeps the message input locked with the send button acting as a cancel
+ * button while a (test) post-generation task runs after the generation
+ * completes, errors out, or is stopped. Unlocks when the task finishes
+ * or is cancelled.
  */
-async function handleGenerationEnded(_type, _options, dryRun) {
-    // Skip background dry runs (quiet prompts, auto-continue, etc.) and return
-    // before clearTestDelay(), so a dry run can't cancel an in-flight
-    // post-processing task from a real generation
-    if (dryRun) {
+async function handleGenerationEnded() {
+    // Only react to generations we locked the input for; background quiet
+    // generations also emit this event and must not run post-processing
+    if (!overseerGeneration) {
         return;
     }
 
+    overseerGeneration = false;
     clearTestDelay();
 
     if (!getSettings().enabled) {
         // Still unlock in case the setting was flipped mid-generation
-        await hideGenerationLoader();
+        setTextareaLocked(false);
+        setSendButtonCancel(false);
         return;
     }
 
     // TODO(test): run the post-processing features here. Remove after testing.
-    // The task loader is shown before the generation one is hidden, so the
-    // input lock is seamless (the overlay never drops between the two).
-    await runTestTask('Post-processing...', 'Cancel post-processing');
-}
+    await runTestTask('Cancel post-processing');
 
-/** Hides the active generation loader, if any. */
-async function hideGenerationLoader() {
-    if (generationLoader) {
-        await generationLoader.hide();
-        generationLoader = null;
-    }
+    setTextareaLocked(false);
 }
 
 function setupEventListeners() {
@@ -208,6 +266,10 @@ function setupEventListeners() {
     eventSource.on(event_types.MESSAGE_RECEIVED, handleIncomingMessage);
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, handleGenerationAfterCommands);
     eventSource.on(event_types.GENERATION_ENDED, handleGenerationEnded);
+
+    // Capture phase, so clicks on the taken-over send button can be intercepted
+    // before SillyTavern's own send handler runs
+    document.addEventListener('click', handleSendButtonClick, true);
 }
 
 async function cleanupEventListeners() {
@@ -216,9 +278,12 @@ async function cleanupEventListeners() {
     eventSource.removeListener(event_types.GENERATION_AFTER_COMMANDS, handleGenerationAfterCommands);
     eventSource.removeListener(event_types.GENERATION_ENDED, handleGenerationEnded);
 
-    // Hide the loader in case the extension is removed while a task is in-flight
+    document.removeEventListener('click', handleSendButtonClick, true);
+
+    // Restore the input bar in case the extension is removed while a task is in-flight
     clearTestDelay();
-    await hideGenerationLoader();
+    setTextareaLocked(false);
+    setSendButtonCancel(false);
 }
 
 // ---- Lifecycle hooks ----
