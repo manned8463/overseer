@@ -1,6 +1,7 @@
 // Overseer - SillyTavern extension boilerplate
 
 const MODULE_NAME = 'overseer';
+const MANIFEST_VERSION = '1.0.0';
 
 const defaultSettings = Object.freeze({
     enabled: false,
@@ -40,7 +41,7 @@ async function appendSettingsPanel() {
 
     const settingsHtml = await renderExtensionTemplateAsync('third-party/overseer', 'settings', {
         title: 'Overseer',
-        version: manifest.version,
+        version: MANIFEST_VERSION,
         defaultValue: settings.option1,
     });
 
@@ -119,6 +120,10 @@ export async function onClean() {
 // Asynchronous setup that doesn't need to block SillyTavern from being ready
 const { eventSource, event_types } = getContext();
 eventSource.on(event_types.APP_READY, async () => {
-    await appendSettingsPanel();
-    console.log('[Overseer] Extension loaded');
+    try {
+        await appendSettingsPanel();
+        console.log('[Overseer] Extension loaded');
+    } catch (error) {
+        console.error('[Overseer] Failed to initialize:', error);
+    }
 });
