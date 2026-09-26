@@ -185,6 +185,7 @@ function runTestTask(stopTooltip) {
             cancelTestTask = null;
             setSendButtonCancel(false);
             resolve();
+            console.log('[Overseer] Test Task Complete...');
         };
 
         // Cancel hook so external cancellation (cleanup, a new generation) ends the task
@@ -195,8 +196,6 @@ function runTestTask(stopTooltip) {
 
         // TODO(test): simulated task duration. Remove after testing.
         testDelayTimer = setTimeout(finish, TEST_DELAY_MS);
-        
-        console.log('[Overseer] Test Task Complete...');
     });
 }
 
