@@ -67,7 +67,7 @@ async function appendSettingsPanel() {
 /** Loader handle for the active generation, or null when idle */
 let generationLoader = null;
 
-/** TODO(test): delay before unlocking the input after generation ends, in ms. Remove after testing. */
+/** TODO(test): simulated post-generation task duration, in ms. Remove after testing. */
 const TEST_DELAY_MS = 10_000;
 
 /** Timer handle for the active test delay, or null when idle */
@@ -87,42 +87,57 @@ function handleIncomingMessage() {
  * Locks the user input with a blocking loader and a cancellable toast
  * when a generation is about to start.
  */
-function handleGenerationAfterCommands() {
+async function handleGenerationAfterCommands() {
     if (!getSettings().enabled) {
         return;
     }
 
-    // Cancel any pending unlock delay from a previous generation
+    // Cancel any pending post-generation hold from a previous generation
+    // and hide its loader if still active
     clearTestDelay();
+    await hideGenerationLoader();
 
     const { loader, stopGeneration } = getContext();
 
-    // The stop button cancels the test delay and stops any in-flight generation,
-    // which disposes the loader / fires GENERATION_ENDED respectively.
+    // The stop button stops the in-flight generation, which fires GENERATION_ENDED,
+    // where the post-generation loader takes over.
     generationLoader = loader.show({
         slug: MODULE_NAME,
         message: 'Generating...',
         stopTooltip: 'Cancel generation',
-        onStop: () => {
-            clearTestDelay();
-            stopGeneration();
-        },
+        onStop: () => stopGeneration(),
     });
-
 }
 
 /**
- * Unlocks the user input when the generation completes, errors out, or is stopped.
+ * Keeps the user input locked with a cancellable loader while a (test)
+ * post-generation task runs after the generation completes, errors out,
+ * or is stopped. Unlocks when the task finishes or is cancelled.
  */
 async function handleGenerationEnded() {
     clearTestDelay();
 
-    if (!generationLoader) {
+    if (!getSettings().enabled) {
+        // Still unlock in case the setting was flipped mid-generation
+        await hideGenerationLoader();
         return;
     }
 
-    // TODO(test): delay unlocking by the simulated duration. Remove after testing.
-    // The loader's stop button cancels the delay and disposes the loader immediately.
+    const { loader } = getContext();
+
+    // Show the post-generation loader before hiding the generation-phase one,
+    // so the input lock is seamless (the overlay never drops between the two)
+    const postLoader = loader.show({
+        slug: MODULE_NAME,
+        message: 'Post-processing...',
+        stopTooltip: 'Cancel',
+        // The stop button cancels the task; stop() disposes the loader immediately
+        onStop: clearTestDelay,
+    });
+    await hideGenerationLoader();
+    generationLoader = postLoader;
+
+    // TODO(test): hide once the simulated task completes. Remove after testing.
     testDelayTimer = setTimeout(() => {
         testDelayTimer = null;
         hideGenerationLoader();
