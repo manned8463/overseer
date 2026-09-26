@@ -1,0 +1,23 @@
+{
+    "display_name": "Overseer",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "dependencies": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Your name",
+    "version": "1.0.0",
+    "homePage": "https://github.com/your/overseer",
+    "auto_update": true,
+    "i18n": {},
+    "hooks": {
+        "install": "onInstall",
+        "update": "onUpdate",
+        "delete": "onDelete",
+        "enable": "onEnable",
+        "disable": "onDisable",
+        "activate": "onActivate",
+        "clean": "onClean"
+    }
+}
