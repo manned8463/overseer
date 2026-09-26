@@ -92,6 +92,9 @@ function handleGenerationAfterCommands() {
         return;
     }
 
+    // Clear any stale test timer from a previous generation
+    clearTestDelay();
+
     const { loader, stopGeneration } = getContext();
 
     // The stop button cancels the test delay and stops any in-flight generation,
@@ -119,6 +122,20 @@ function handleGenerationAfterCommands() {
 async function handleGenerationEnded() {
     clearTestDelay();
 
+    if (!generationLoader) {
+        return;
+    }
+
+    // TODO(test): delay unlocking by the simulated duration. Remove after testing.
+    // The loader's stop button cancels the delay and disposes the loader immediately.
+    testDelayTimer = setTimeout(() => {
+        testDelayTimer = null;
+        hideGenerationLoader();
+    }, TEST_DELAY_MS);
+}
+
+/** Hides the active generation loader, if any. */
+async function hideGenerationLoader() {
     if (generationLoader) {
         await generationLoader.hide();
         generationLoader = null;
