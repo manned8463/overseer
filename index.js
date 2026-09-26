@@ -43,6 +43,7 @@ async function appendSettingsPanel() {
         title: 'Overseer',
         version: MANIFEST_VERSION,
         defaultValue: settings.option1,
+        isEnabled: settings.enabled,
     });
 
     $('#extensions_settings2').append(settingsHtml);
