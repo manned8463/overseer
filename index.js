@@ -142,8 +142,13 @@ function handleIncomingMessage() {
  * Runs the (test) pre-processing task under a cancellable loader, then locks
  * the user input with a blocking loader while the generation is in flight.
  */
-async function handleGenerationAfterCommands() {
+async function handleGenerationAfterCommands(_type, _options, dryRun) {
     if (!getSettings().enabled) {
+        return;
+    }
+
+    // Skip background dry runs (quiet prompts, auto-continue, etc.)
+    if (dryRun) {
         return;
     }
 
@@ -168,7 +173,14 @@ async function handleGenerationAfterCommands() {
  * post-generation task runs after the generation completes, errors out,
  * or is stopped. Unlocks when the task finishes or is cancelled.
  */
-async function handleGenerationEnded() {
+async function handleGenerationEnded(_type, _options, dryRun) {
+    // Skip background dry runs (quiet prompts, auto-continue, etc.) and return
+    // before clearTestDelay(), so a dry run can't cancel an in-flight
+    // post-processing task from a real generation
+    if (dryRun) {
+        return;
+    }
+
     clearTestDelay();
 
     if (!getSettings().enabled) {
