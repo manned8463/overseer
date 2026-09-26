@@ -64,18 +64,55 @@ async function appendSettingsPanel() {
 
 // ---- Event handlers ----
 
+/** Loader handle for the active generation, or null when idle */
+let generationLoader = null;
+
 function handleIncomingMessage() {
     // Handle message
+}
+
+/**
+ * Locks the user input with a blocking loader and a cancellable toast
+ * when a generation is about to start.
+ */
+function handleGenerationAfterCommands() {
+    const { loader } = getContext();
+
+    // The default stop handler calls stopGeneration(), which fires GENERATION_ENDED,
+    // so the loader is hidden by handleGenerationEnded() in all cases.
+    generationLoader = loader.show({
+        slug: MODULE_NAME,
+        message: 'Generating...',
+        stopTooltip: 'Cancel generation',
+    });
+}
+
+/**
+ * Unlocks the user input when the generation completes, errors out, or is stopped.
+ */
+async function handleGenerationEnded() {
+    if (generationLoader) {
+        await generationLoader.hide();
+        generationLoader = null;
+    }
 }
 
 function setupEventListeners() {
     const { eventSource, event_types } = getContext();
     eventSource.on(event_types.MESSAGE_RECEIVED, handleIncomingMessage);
+    eventSource.on(event_types.GENERATION_AFTER_COMMANDS, handleGenerationAfterCommands);
+    eventSource.on(event_types.GENERATION_ENDED, handleGenerationEnded);
 }
 
-function cleanupEventListeners() {
+async function cleanupEventListeners() {
     const { eventSource, event_types } = getContext();
     eventSource.removeListener(event_types.MESSAGE_RECEIVED, handleIncomingMessage);
+    eventSource.removeListener(event_types.GENERATION_AFTER_COMMANDS, handleGenerationAfterCommands);
+    eventSource.removeListener(event_types.GENERATION_ENDED, handleGenerationEnded);
+
+    // Hide the loader in case the extension is removed while a generation is in-flight
+    await generationLoader?.hide();
+    generationLoader = null;
 }
 
 // ---- Lifecycle hooks ----
