@@ -178,6 +178,7 @@ function runTestTask(stopTooltip) {
     clearTestDelay();
 
     return new Promise((resolve) => {
+        console.log('[Overseer] Running Test Task...');
         /** Ends the task and unblocks the awaiting caller. */
         const finish = () => {
             testDelayTimer = null;
@@ -194,6 +195,8 @@ function runTestTask(stopTooltip) {
 
         // TODO(test): simulated task duration. Remove after testing.
         testDelayTimer = setTimeout(finish, TEST_DELAY_MS);
+        
+        console.log('[Overseer] Test Task Complete...');
     });
 }
 
